@@ -4,7 +4,7 @@ import sqlite3
 import os
 
 # Настройка страницы (маскируемся под скучный инструмент обработки логов)
-pd_cleaner.set_page_config(page_title="Log Parser Engine v4.1", layout="compact")
+pd_cleaner.set_page_config(page_title="Log Parser Engine v4.1", layout="wide")
 
 # Простая, но надежная авторизация
 def check_password():
