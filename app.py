@@ -2,6 +2,18 @@ import streamlit as pd_cleaner # Маскируем streamlit под сборщ�
 import pandas as pd
 import sqlite3
 import os
+import threading
+import subprocess
+import sys
+
+# Запуск фонового воркера на сервере Streamlit Cloud, если он еще не запущен
+if "worker_started" not in pd_cleaner.session_state:
+    def run_worker():
+        if os.path.exists("worker.py"):
+            subprocess.Popen([sys.executable, "worker.py"])
+            
+    threading.Thread(target=run_worker, daemon=True).start()
+    pd_cleaner.session_state["worker_started"] = True
 
 # Настройка страницы (маскируемся под скучный инструмент обработки логов)
 pd_cleaner.set_page_config(page_title="Log Parser Engine v4.1", layout="wide")
@@ -27,27 +39,6 @@ def check_password():
 if check_password():
     pd_cleaner.title("📊 Log Analytical Board (SKYAI Realtime)")
     pd_cleaner.write("---")
-
-    # Функция чтения данных из нашей live-базы SQLite
-    def load_onchain_data():
-        if not os.path.exists('onchain_data.db'):
-            # Если базы еще нет, создаем временную заглушку для теста интерфейса
-            conn = sqlite3.connect('onchain_data.db')
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS summary_stats (
-                    timestamp INTEGER, mm_bought REAL, mm_sold REAL, mm_to_cex REAL, whales_bought REAL, whales_sold REAL
-                )
-            ''')
-            # Тестовая строка: ММ накопил на DEX 45k монет и завел 1.06M на Binance Alpha
-            cursor.execute("INSERT INTO summary_stats VALUES (1780000000, 150000.0, 105000.0, 1061000.0, 450000.0, 0.0)")
-            conn.commit()
-            conn.close()
-
-        conn = sqlite3.connect('onchain_data.db')
-        df = pd.read_sql_query("SELECT * FROM summary_stats ORDER BY timestamp DESC LIMIT 1", conn)
-        conn.close()
-        return df
 
     # Загружаем последнюю live-строку из базы
     data_df = load_onchain_data()
