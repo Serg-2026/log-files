@@ -9,7 +9,7 @@ pd_cleaner.set_page_config(page_title="Multi-Asset Analytics Board", layout="wid
 TOKENS = {
     "SKYAI (BNB Chain)": {"address": "0x92aa03137385F18539301349dcfC9EbC923fFb10", "chain": "bsc"},
     "POPCAT (Solana)": {"address": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "chain": "solana"},
-    "RE (Ethereum)": {"address": "0xbbC44297136Bb6292323aAA74360e2B325Be83D2", "chain": "ethereum"}
+    "RE (Ethereum)": {"address": "0x526526528F35AC738177003b8773B402B8Df8143", "chain": "ethereum"}
 }
 
 # ==========================================
