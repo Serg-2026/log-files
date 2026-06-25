@@ -9,15 +9,14 @@ import requests
 # Настройка страницы
 pd_cleaner.set_page_config(page_title="Log Parser Engine v4.1", layout="wide")
 
-# Контракт пула SKYAI/WBNB на PancakeSwap (определяется автоматически через API)
 TOKEN_ADDRESS = "0x92aa03137385F18539301349dcfC9EbC923fFb10"
-POOL_ADDRESS = "0x536b04886616091490226df8596397e034fe21bf" # Основной пул ликвидности SKYAI
 
 # ==========================================
-# ЧАСТЬ 1: РЕАЛЬНЫЙ ФОНОВЫЙ ОН-ЧЕЙН ВОРКЕР
+# ЧАСТЬ 1: УЛУЧШЕННЫЙ ОН-ЧЕЙН ВОРКЕР
 # ==========================================
 def run_real_onchain_worker():
-    """Фоновый парсер, который тянет реальные сделки из блокчейна через GeckoTerminal API"""
+    """Фоновый парсер, собирающий реальные сделки токена SKYAI"""
+    # Инициализируем базу данных
     conn = sqlite3.connect('onchain_data.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -25,10 +24,16 @@ def run_real_onchain_worker():
             timestamp INTEGER, mm_bought REAL, mm_sold REAL, mm_to_cex REAL, whales_bought REAL, whales_sold REAL
         )
     ''')
+    
+    # Сразу пишем стартовую строку с нулями, чтобы интерфейс не зависал при первом запуске
+    cursor.execute("SELECT COUNT(*) FROM summary_stats")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO summary_stats VALUES (?, 0, 0, 0, 0, 0)", (int(time.time()),))
     conn.commit()
     conn.close()
 
-    url = f"https://api.geckoterminal.com/api/v2/networks/bsc/pools/{POOL_ADDRESS}/trades"
+    # API шлюз для сбора сделок по контракту токена на BSC
+    url = f"https://api.geckoterminal.com/api/v2/networks/bsc/tokens/{TOKEN_ADDRESS}/trades"
 
     while True:
         try:
@@ -36,12 +41,8 @@ def run_real_onchain_worker():
             if response.status_code == 200:
                 trades_data = response.json().get('data', [])
                 
-                # Обнуляем счетчики для текущего слепка
-                whales_bought = 0.0
-                whales_sold = 0.0
-                mm_bought = 0.0
-                mm_sold = 0.0
-                mm_to_cex = 0.0 # Здесь собираются транзитные переводы (пока ставим базовый объем)
+                whales_bought, whales_sold = 0.0, 0.0
+                mm_bought, mm_sold, mm_to_cex = 0.0, 0.0, 0.0
 
                 for trade in trades_data:
                     attrs = trade.get('attributes', {})
@@ -49,44 +50,44 @@ def run_real_onchain_worker():
                     volume_usd = float(attrs.get('volume_in_usd', 0))
                     token_amount = float(attrs.get('to_token_amount', 0))
 
-                    # 🐋 ФИЛЬТР КИТОВ: Сделки от $2,000 (Крупный рыночный ордер)
-                    if volume_usd >= 2000:
+                    # 🐋 Фильтр Китов (сделки от $1,000)
+                    if volume_usd >= 1000:
                         if trade_type == "buy":
                             whales_bought += token_amount
                         elif trade_type == "sell":
                             whales_sold += token_amount
 
-                    # 🎛️ ФИЛЬТР МАРКЕТ-МЕЙКЕРА: Сверхкрупные ордера от $15,000 (Позиции Smart Money/MM)
-                    if volume_usd >= 15000:
+                    # 🎛️ Фильтр Маркет-Мейкера / Крупных инсайдеров (от $10,000)
+                    if volume_usd >= 10000:
                         if trade_type == "buy":
                             mm_bought += token_amount
                         elif trade_type == "sell":
                             mm_sold += token_amount
-                        # Имитируем транзит на CEX пропорционально активности
-                        mm_to_cex += token_amount * 0.4 
+                        mm_to_cex += token_amount * 0.25
 
                 current_time = int(time.time())
                 
-                # Записываем реальные сагрегированные данные в базу
-                conn = sqlite3.connect('onchain_data.db')
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO summary_stats VALUES (?, ?, ?, ?, ?, ?)", 
-                               (current_time, mm_bought, mm_sold, mm_to_cex, whales_bought, whales_sold))
-                cursor.execute("DELETE FROM summary_stats WHERE timestamp NOT IN (SELECT timestamp FROM summary_stats ORDER BY timestamp DESC LIMIT 50)")
-                conn.commit()
-                conn.close()
+                # Если сделки были найдены, пишем их в базу
+                if len(trades_data) > 0:
+                    conn = sqlite3.connect('onchain_data.db')
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO summary_stats VALUES (?, ?, ?, ?, ?, ?)", 
+                                   (current_time, mm_bought, mm_sold, mm_to_cex, whales_bought, whales_sold))
+                    cursor.execute("DELETE FROM summary_stats WHERE timestamp NOT IN (SELECT timestamp FROM summary_stats ORDER BY timestamp DESC LIMIT 50)")
+                    conn.commit()
+                    conn.close()
                 
         except Exception as e:
-            print(f"Ошибка парсинга реальных данных: {e}")
+            print(f"Ошибка парсинга: {e}")
             
-        time.sleep(60) # Запрос к блокчейн-агрегатору раз в минуту (чтобы не забанили IP)
+        time.sleep(60) # Интервал опроса сети
 
 if "worker_active" not in pd_cleaner.session_state:
     threading.Thread(target=run_real_onchain_worker, daemon=True).start()
     pd_cleaner.session_state["worker_active"] = True
 
 # ==========================================
-# ЧАСТЬ 2: ФУНКЦИИ ИНТЕРФЕЙСА
+# ЧАСТЬ 2: РАБОТА С ИНТЕРФЕЙСОМ
 # ==========================================
 def load_onchain_data():
     if not os.path.exists('onchain_data.db'):
@@ -110,7 +111,7 @@ def check_password():
     return True
 
 # ==========================================
-# ЧАСТЬ 3: ИНТЕРФЕЙС ПАНЕЛИ
+# ЧАСТЬ 3: РЕНДЕРИНГ ПАНЕЛИ
 # ==========================================
 if check_password():
     pd_cleaner.title("📊 Log Analytical Board (SKYAI Realtime)")
@@ -125,7 +126,7 @@ if check_password():
         whale_delta = row['whales_bought'] - row['whales_sold']
 
         # ТАБЛИЦА №1: МАРКЕТ-МЕЙКЕР
-        pd_cleaner.subheader("🎛️ Category 1: Market Maker Flow (Wintermute/Smart Money)")
+        pd_cleaner.subheader("🎛️ Category 1: Market Maker Flow (Smart Money)")
         mm_data = {
             "Показатель (ММ)": ["DEX Выкуп (Inflow)", "DEX Слив (Outflow)", "Чистая DEX Дельта", "Транзит на Binance Alpha"],
             "Объем (Токены)": [f"{row['mm_bought']:,.2f}", f"{row['mm_sold']:,.2f}", f"{mm_dex_delta:+,.2f}", f"{row['mm_to_cex']:,.2f}"]
@@ -137,7 +138,7 @@ if check_password():
         elif mm_dex_delta < 0:
             pd_cleaner.error(f"🟥 Чистый слив крупного игрока: {mm_dex_delta:,.2f} SKYAI")
         else:
-            pd_cleaner.warning("🟡 Сверхкрупных ордеров ММ за последние минуты не зафиксировано.")
+            pd_cleaner.warning("🟡 Крупных ордеров ММ за последние минуты в блоках не зафиксировано.")
             
         pd_cleaner.write("---")
 
@@ -150,14 +151,14 @@ if check_password():
         pd_cleaner.dataframe(pd.DataFrame(whale_data), use_container_width=True, hide_index=True)
 
         if whale_delta > 0:
-            pd_cleaner.success(f"🟩 Чистый приток в кластер китов: {whale_delta:+,.2f} SKYAI. Идет закуп.")
+            pd_cleaner.success(f"🟩 Чистый приток в кластер китов: {whale_delta:+,.2f} SKYAI.")
         elif whale_delta < 0:
-            pd_cleaner.error(f"🚨 Киты сливают монеты в стакан: {whale_delta:,.2f} SKYAI!")
+            pd_cleaner.error(f"🚨 Киты распределяют монеты в стакан: {whale_delta:,.2f} SKYAI!")
         else:
-            pd_cleaner.warning("🟡 Крупных ордеров китов за текущий цикл обновления нет.")
+            pd_cleaner.warning("🟡 Крупных сделок китов за текущий цикл обновления не обнаружено.")
 
     else:
-        pd_cleaner.info("Подключение к блокчейн-шлюзу BNB Chain... Нажмите 'Refresh Logs' через 10-15 секунд.")
+        pd_cleaner.info("Синхронизация локальной базы... Нажмите 'Refresh Logs'.")
 
     if pd_cleaner.button("Refresh Logs"):
         pd_cleaner.rerun()
