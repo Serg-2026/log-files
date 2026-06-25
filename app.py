@@ -16,7 +16,7 @@ def check_password():
         user_password = pd_cleaner.text_input("Enter System Access Key:", type="password")
         if user_password:
             # Сюда вы потом вставите свой секретный пароль (пока для теста оставим 'my_secret_key_2026')
-            if user_password == "my_secret_key_2026":
+            if user_password == "Xzaq1234":
                 pd_cleaner.session_state["authenticated"] = True
                 pd_cleaner.rerun()
             else:
